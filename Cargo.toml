@@ -1,0 +1,32 @@
+[package]
+name = "otterm"
+version = "0.3.0"
+edition = "2021"
+description = "Otterm — the output librarian. Run commands through it, never lose their output again."
+license = "MIT"
+
+[dependencies]
+# ratatui 0.29 pins crossterm 0.28 — keep these in lockstep to avoid two
+# copies of crossterm in the dependency graph.
+ratatui = "0.29"
+crossterm = "0.28"
+# pty spawning so captured commands still think they're on a terminal
+portable-pty = "0.9"
+# render captured ANSI output inside ratatui
+ansi-to-tui = "7"
+strip-ansi-escapes = "0.2"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "6"
+
+[target.'cfg(unix)'.dependencies]
+# forward SIGWINCH to the child pty so resizes propagate
+signal-hook = "0.3"
+# termios control: drop pty echo for non-interactive captures
+libc = "0.2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
