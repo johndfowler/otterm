@@ -390,7 +390,7 @@ pub fn detect_bind() -> String {
 pub fn run(store: &Store, bind: &str, port: u16) -> io::Result<()> {
     let addr = format!("{bind}:{port}");
     let listener = TcpListener::bind(&addr)?;
-    if bind == "0.0.0.0" || bind == "::" {
+    if matches!(bind, "0.0.0.0" | "::" | "[::]") {
         eprintln!(
             "otterm serve: WARNING — listening on all interfaces; \
              anyone who can reach this machine can watch your captures."
