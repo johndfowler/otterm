@@ -1,6 +1,6 @@
 [package]
 name = "otterm"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Otterm — the output librarian. Run commands through it, never lose their output again."
 license = "MIT"
