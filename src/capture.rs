@@ -172,7 +172,7 @@ pub fn run_command(store: &Store, argv: &[String]) -> io::Result<i32> {
     // every single command.
     if std::env::var_os("OTTERM_QUIET").is_none() {
         eprintln!(
-            "\x1b[2m~( o.o )~  captured {} · exit {} · otterm to browse\x1b[0m",
+            "\x1b[2m🦦  captured {} · exit {} · otterm to browse\x1b[0m",
             human_bytes(bytes),
             status.exit_code(),
         );

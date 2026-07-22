@@ -29,5 +29,5 @@ pub const OTTER: &str = r"
 /// scroll without allocating a new string each frame.
 pub const WAVES: &str = "  ~    ~~     ~   ~~~    ~     ~~   ~    ~~~   ~  ";
 
-pub const TAGLINE: &str = "the output librarian — never lose a scrollback again";
+pub const TAGLINE: &str = "stay cool.";
 pub const HINT: &str = "press any key to dive in  ·  q to quit";

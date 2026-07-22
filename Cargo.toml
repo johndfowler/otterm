@@ -19,6 +19,13 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
+# in-terminal QR codes for boarding a machine from your phone
+qrcode = { version = "0.14", default-features = false }
+
+[dev-dependencies]
+# QR roundtrip verification: render → decode → same content
+rqrr = "0.7"
+image = "0.25"
 
 [target.'cfg(unix)'.dependencies]
 # forward SIGWINCH to the child pty so resizes propagate

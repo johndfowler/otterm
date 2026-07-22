@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Flex, Layout, Rect},
     style::{Modifier, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Cell, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Padding, Paragraph, Row, Table},
     Frame,
 };
 
@@ -19,28 +19,38 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     frame.render_widget(Block::new().style(Style::new().bg(theme::DEEP)), frame.area());
     match app.view {
         View::Splash => render_splash(frame, app),
-        View::List | View::Results | View::Viewer => {
+        View::List | View::Results | View::Raft | View::Den => {
+            // A strip of river flows between the header and the content.
+            let [header, waves, content, status] = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(0),
+                Constraint::Length(1),
+            ])
+            .areas(frame.area());
+            render_header(frame, header, app);
+            render_river_strip(frame, waves, app.tick);
+            match app.view {
+                View::List => render_list(frame, content, app),
+                View::Results => render_results(frame, content, app),
+                View::Raft => render_raft(frame, content, app),
+                _ => render_den(frame, content, app),
+            }
+            render_status(frame, status, app);
+            if let Some((caption, qr)) = &app.qr {
+                render_qr_overlay(frame, caption, qr);
+            }
+        }
+        View::Viewer => {
+            // No ambient motion here — you're reading.
             let [header, content, status] = Layout::vertical([
                 Constraint::Length(1),
                 Constraint::Min(0),
                 Constraint::Length(1),
             ])
             .areas(frame.area());
-            match app.view {
-                View::List => {
-                    render_header(frame, header, app);
-                    render_list(frame, content, app);
-                }
-                View::Results => {
-                    render_header(frame, header, app);
-                    render_results(frame, content, app);
-                }
-                View::Viewer => {
-                    render_viewer_header(frame, header, app);
-                    render_viewer(frame, content, app);
-                }
-                View::Splash => unreachable!(),
-            }
+            render_viewer_header(frame, header, app);
+            render_viewer(frame, content, app);
             render_status(frame, status, app);
         }
     }
@@ -52,14 +62,14 @@ fn render_splash(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let title_lines = banner::TITLE.lines().skip(1).count() as u16;
     let otter_lines = banner::OTTER.lines().skip(1).count() as u16;
-    let height = title_lines + otter_lines + 5;
+    let height = title_lines + otter_lines + 6; // +1 row of slack for the bob
 
     let [center] = Layout::vertical([Constraint::Length(height)])
         .flex(Flex::Center)
         .areas(area);
     let rows = Layout::vertical([
         Constraint::Length(title_lines),
-        Constraint::Length(otter_lines),
+        Constraint::Length(otter_lines + 1), // otter + bob slack
         Constraint::Length(1), // waves
         Constraint::Length(1),
         Constraint::Length(1), // tagline
@@ -73,8 +83,11 @@ fn render_splash(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(title).alignment(Alignment::Center), rows[0]);
 
     // Center the art as a block, not per line — per-line centering would
-    // shift each row of the drawing independently and distort it.
-    frame.render_widget(otter_art(theme::FUR), centered_h(rows[1], otter_width()));
+    // shift each row of the drawing independently and distort it. The otter
+    // bobs on the water: down a row every other beat.
+    let bob = ((app.tick / 6) % 2) as u16;
+    let otter_area = Rect { y: rows[1].y + bob, height: otter_lines, ..rows[1] };
+    frame.render_widget(otter_art(theme::FUR), centered_h(otter_area, otter_width()));
 
     frame.render_widget(
         Paragraph::new(wave_line(app.tick)).alignment(Alignment::Center),
@@ -92,6 +105,38 @@ fn render_splash(frame: &mut Frame, app: &App) {
             rows[6],
         );
     }
+}
+
+fn content_block(title: &'static str) -> Block<'static> {
+    Block::new()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(theme::FUR_DARK))
+        .title(Span::styled(title, Style::new().fg(theme::CLAM).bold()))
+        .padding(Padding::new(2, 2, 1, 1))
+}
+
+/// The river strip: scrolling waves with the otter swimming laps across
+/// them, flipping direction at the banks.
+fn render_river_strip(frame: &mut Frame, area: Rect, tick: u64) {
+    frame.render_widget(Paragraph::new(wave_line(tick)), area);
+    const EAST: &str = "~( o.o)>";
+    const WEST: &str = "<(o.o )~";
+    let w = EAST.len() as u16;
+    if area.width <= w {
+        return;
+    }
+    let span = (area.width - w) as u64;
+    let phase = (tick / 2) % (span * 2);
+    let (x, glyph) = if phase < span {
+        (phase as u16, EAST)
+    } else {
+        ((span * 2 - phase) as u16, WEST)
+    };
+    let swim = Rect::new(area.x + x, area.y, w, 1);
+    frame.render_widget(
+        Paragraph::new(Span::styled(glyph, Style::new().fg(theme::FUR).bold())),
+        swim,
+    );
 }
 
 /// Hard column clipping looks like text ran into its neighbor; mark it.
@@ -136,12 +181,16 @@ fn wave_line(tick: u64) -> Line<'static> {
 // ------------------------------------------------------------ list view --
 
 fn render_header(frame: &mut Frame, area: Rect, app: &App) {
+    // The mascot blinks every few seconds. It's alive, you see.
+    let mascot = if app.tick % 40 < 3 { " ~( -.- )~ " } else { " ~( o.o )~ " };
+    let place = match app.view {
+        View::Raft => format!("raft · {} machines", app.peers.len()),
+        View::Den => "den".to_owned(),
+        _ => format!("library · {} runs", app.runs.len()),
+    };
     let mut spans = vec![
-        Span::styled(" ~( o.o )~ ", Style::new().fg(theme::FUR).bold()),
-        Span::styled(
-            format!("library · {} runs", app.runs.len()),
-            Style::new().fg(theme::CREAM),
-        ),
+        Span::styled(mascot, Style::new().fg(theme::FUR).bold()),
+        Span::styled(place, Style::new().fg(theme::CREAM)),
     ];
     if !app.filter.is_empty() {
         spans.push(Span::styled(
@@ -227,6 +276,109 @@ fn render_empty_state(frame: &mut Frame, area: Rect, msg: &str) {
             .alignment(Alignment::Center),
         text,
     );
+}
+
+// ------------------------------------------------------------ raft view --
+
+fn render_raft(frame: &mut Frame, area: Rect, app: &mut App) {
+    if let Some(err) = &app.peers_err {
+        render_empty_state(frame, area, &format!("the raft is adrift:\n\n{err}"));
+        return;
+    }
+    if app.peers.is_empty() {
+        render_empty_state(frame, area, "no machines on the tailnet");
+        return;
+    }
+    let rows = app.peers.iter().map(|p| {
+        let (dot, color) = if p.online {
+            ("●", theme::OK)
+        } else {
+            ("○", theme::FUR_DARK)
+        };
+        let name = if p.is_self {
+            format!("{} (you are here)", p.name)
+        } else {
+            p.name.clone()
+        };
+        Row::new(vec![
+            Cell::from(dot).style(Style::new().fg(color).bold()),
+            Cell::from(name).style(Style::new().fg(theme::CREAM)),
+            Cell::from(p.os.clone()).style(Style::new().fg(theme::FUR)),
+            Cell::from(p.ip.clone()).style(Style::new().fg(theme::RIVER)),
+        ])
+    });
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(1),
+            Constraint::Min(16),
+            Constraint::Length(8),
+            Constraint::Length(16),
+        ],
+    )
+    .column_spacing(2)
+    .row_highlight_style(Style::new().bg(theme::FUR).fg(theme::DEEP).bold());
+    app.peers_state.select(Some(app.peer_selected));
+    frame.render_stateful_widget(table, area, &mut app.peers_state);
+}
+
+/// Center the QR over everything. Phones need the real block glyphs at
+/// decent contrast, so it gets a cream-on-dark box of its own.
+fn render_qr_overlay(frame: &mut Frame, caption: &str, qr: &str) {
+    let qr_lines: Vec<&str> = qr.lines().collect();
+    let w = qr_lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
+    let h = qr_lines.len() as u16 + 2; // + caption + hint
+    let area = frame.area();
+    let [vcenter] = Layout::vertical([Constraint::Length(h.min(area.height))])
+        .flex(Flex::Center)
+        .areas(area);
+    let boxed = centered_h(vcenter, w.max(caption.len() as u16).min(area.width));
+    frame.render_widget(ratatui::widgets::Clear, boxed);
+    let mut text: Vec<Line> = qr_lines
+        .iter()
+        .map(|l| Line::from(l.to_string()).style(Style::new().fg(theme::CREAM).bg(theme::DEEP)))
+        .collect();
+    text.push(Line::from(caption.to_owned()).style(Style::new().fg(theme::CLAM).bold()));
+    text.push(Line::from("scan with a phone terminal · any key closes").style(Style::new().fg(theme::FUR)));
+    frame.render_widget(Paragraph::new(text).alignment(Alignment::Center), boxed);
+}
+
+// ------------------------------------------------------------- den view --
+
+fn render_den(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(s) = app.den.as_ref() else { return };
+    let label = Style::new().fg(theme::FUR);
+    let value = Style::new().fg(theme::CREAM).bold();
+    let row = |k: &'static str, v: String| {
+        Line::from(vec![Span::styled(k, label), Span::styled(v, value)])
+    };
+    let mut lines = vec![
+        Line::from("🦦  the den").style(Style::new().fg(theme::CLAM).bold()),
+        Line::raw(""),
+        row("runs captured   ", s.total.to_string()),
+        row("output archived ", human_bytes(s.bytes)),
+        row("captured today  ", s.today.to_string()),
+        row(
+            "success rate    ",
+            if s.ok + s.failed > 0 {
+                format!("{:.0}%", 100.0 * s.ok as f64 / (s.ok + s.failed) as f64)
+            } else {
+                "—".to_owned()
+            },
+        ),
+    ];
+    if let Some((cmd, n)) = &s.most_run {
+        lines.push(row("comfort command ", format!("{} ({n}×)", ellipsize(cmd, 40))));
+    }
+    if let Some((cmd, ms)) = &s.longest {
+        lines.push(row("longest sit     ", format!("{} ({})", ellipsize(cmd, 40), duration(*ms))));
+    }
+    lines.push(Line::raw(""));
+    lines.push(
+        Line::from("every byte remembered · close your tabs · stay cool 🦦")
+            .style(Style::new().fg(theme::RIVER).italic()),
+    );
+    frame.render_widget(Paragraph::new(lines).block(content_block(" 🦦 Den ")), area);
 }
 
 // --------------------------------------------------------- results view --
@@ -375,12 +527,14 @@ fn prompt_line(label: &str, input: &str) -> Line<'static> {
 
 fn hints_line(app: &App) -> Line<'static> {
     let hints = match app.view {
-        View::List => "  Enter view · R re-run · / filter · s search output · x delete · q quit",
+        View::List => "  Enter view · R re-run · t raft · o den · / filter · s search · x delete · q quit",
         View::Results => "  Enter open at match · Esc back",
         View::Viewer => match app.viewer.as_ref() {
             Some(v) if v.live => "  f follow · j/k scroll · G bottom · / search · Esc back",
             _ => "  j/k scroll · d/u page · g/G ends · / search · n/N matches · Esc back",
         },
+        View::Raft => "  Enter board (ssh, captured) · p phone QR · r refresh · Esc back",
+        View::Den => "  Esc back",
         View::Splash => "",
     };
     let mut n_of_m = String::new();

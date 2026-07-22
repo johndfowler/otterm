@@ -21,6 +21,10 @@ pub enum View {
     List,
     Results,
     Viewer,
+    /// The tailnet fleet — board machines over ssh.
+    Raft,
+    /// Stats about your library, presided over by 🦦.
+    Den,
 }
 
 /// What the status-bar input line is currently collecting, if anything.
@@ -31,6 +35,58 @@ pub enum Mode {
     SearchInput,
     ViewerSearchInput,
     ConfirmDelete,
+}
+
+/// Library-wide stats for the Den view, computed on entry.
+pub struct DenStats {
+    pub total: usize,
+    pub bytes: u64,
+    pub ok: usize,
+    pub failed: usize,
+    pub today: usize,
+    /// (command, times run) — the command you keep coming back to.
+    pub most_run: Option<(String, usize)>,
+    /// (command, duration_ms) — the longest sit.
+    pub longest: Option<(String, u64)>,
+}
+
+impl DenStats {
+    pub fn compute(runs: &[RunMeta]) -> DenStats {
+        let mut by_cmd: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut most: Option<(String, usize)> = None;
+        let day_ago = now_ms().saturating_sub(24 * 60 * 60 * 1000);
+        let mut stats = DenStats {
+            total: runs.len(),
+            bytes: 0,
+            ok: 0,
+            failed: 0,
+            today: 0,
+            most_run: None,
+            longest: None,
+        };
+        for m in runs {
+            stats.bytes += m.bytes;
+            match m.exit_code {
+                Some(0) => stats.ok += 1,
+                Some(_) => stats.failed += 1,
+                None => {}
+            }
+            if m.started_ms >= day_ago {
+                stats.today += 1;
+            }
+            let cmdline = m.cmdline();
+            let n = by_cmd.entry(cmdline.clone()).or_insert(0);
+            *n += 1;
+            if most.as_ref().is_none_or(|(_, best)| *n > *best) {
+                most = Some((cmdline.clone(), *n));
+            }
+            if stats.longest.as_ref().is_none_or(|(_, d)| m.duration_ms > *d) {
+                stats.longest = Some((cmdline, m.duration_ms));
+            }
+        }
+        stats.most_run = most;
+        stats
+    }
 }
 
 /// One content-search match: which run, which line, what it said.
@@ -86,6 +142,17 @@ pub struct App {
     pub hits_state: TableState,
     pub content_query: String,
     pub viewer: Option<Viewer>,
+    /// The tailnet fleet (Raft view).
+    pub peers: Vec<crate::fleet::Peer>,
+    pub peer_selected: usize,
+    pub peers_state: TableState,
+    pub peers_err: Option<String>,
+    /// A QR overlay: (caption, rendered half-block text).
+    pub qr: Option<(String, String)>,
+    /// Set by the Raft view; the event loop suspends the TUI, runs the ssh
+    /// session through capture, and resumes.
+    pub pending_ssh: Option<String>,
+    pub den: Option<DenStats>,
 }
 
 impl App {
@@ -108,9 +175,20 @@ impl App {
             hits_state: TableState::default(),
             content_query: String::new(),
             viewer: None,
+            peers: Vec::new(),
+            peer_selected: 0,
+            peers_state: TableState::default(),
+            peers_err: None,
+            qr: None,
+            pending_ssh: None,
+            den: None,
         };
         app.reload()?;
         Ok(app)
+    }
+
+    pub fn take_pending_ssh(&mut self) -> Option<String> {
+        self.pending_ssh.take()
     }
 
     pub fn reload(&mut self) -> std::io::Result<()> {
@@ -223,11 +301,72 @@ impl App {
             }
             return;
         }
+        // An open QR overlay swallows the next key and closes.
+        if self.qr.is_some() {
+            self.qr = None;
+            return;
+        }
         match self.view {
             View::List => self.on_key_list(code),
             View::Results => self.on_key_results(code),
             View::Viewer => self.on_key_viewer(code),
+            View::Raft => self.on_key_raft(code),
+            View::Den => match code {
+                KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('o') => self.view = View::List,
+                _ => {}
+            },
             View::Splash => unreachable!(),
+        }
+    }
+
+    fn open_raft(&mut self) {
+        match crate::fleet::peers() {
+            Ok(peers) => {
+                self.peers = peers;
+                self.peers_err = None;
+            }
+            Err(e) => {
+                self.peers.clear();
+                self.peers_err = Some(e.to_string());
+            }
+        }
+        self.peer_selected = self.peer_selected.min(self.peers.len().saturating_sub(1));
+        self.view = View::Raft;
+    }
+
+    fn on_key_raft(&mut self, code: KeyCode) {
+        let len = self.peers.len();
+        match code {
+            KeyCode::Char('q') | KeyCode::Esc => self.view = View::List,
+            KeyCode::Char('j') | KeyCode::Down if len > 0 => {
+                self.peer_selected = (self.peer_selected + 1).min(len - 1);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.peer_selected = self.peer_selected.saturating_sub(1)
+            }
+            KeyCode::Char('g') => self.peer_selected = 0,
+            KeyCode::Char('G') if len > 0 => self.peer_selected = len - 1,
+            KeyCode::Char('r') => self.open_raft(),
+            KeyCode::Enter => {
+                let Some(peer) = self.peers.get(self.peer_selected) else { return };
+                if peer.is_self {
+                    self.status = Some("that's this machine — you're already aboard".into());
+                } else if !peer.online {
+                    self.status = Some(format!("{} is offline", peer.name));
+                } else {
+                    self.pending_ssh = Some(peer.ssh_target());
+                }
+            }
+            // 'p' for phone: QR-encode the ssh URI so a phone terminal can
+            // board the same machine by pointing a camera at the screen.
+            KeyCode::Char('p') => {
+                let Some(peer) = self.peers.get(self.peer_selected) else { return };
+                match crate::fleet::qr_text(&peer.ssh_uri()) {
+                    Ok(qr) => self.qr = Some((peer.ssh_uri(), qr)),
+                    Err(e) => self.status = Some(format!("QR failed: {e}")),
+                }
+            }
+            _ => {}
         }
     }
 
@@ -275,6 +414,11 @@ impl App {
                 }
             }
             KeyCode::Char('R') => self.rerun_selected(),
+            KeyCode::Char('t') => self.open_raft(),
+            KeyCode::Char('o') => {
+                self.den = Some(DenStats::compute(&self.runs));
+                self.view = View::Den;
+            }
             _ => {}
         }
     }

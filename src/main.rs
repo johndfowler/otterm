@@ -3,6 +3,7 @@
 
 mod banner;
 mod capture;
+mod fleet;
 mod store;
 mod tui;
 

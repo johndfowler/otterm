@@ -47,6 +47,26 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, store: Store) -> io::Resu
             app.on_tick();
             last_tick = Instant::now();
         }
+
+        // Boarding a raft machine: hand the real terminal to an `otterm run
+        // -- ssh …` child (which captures the session), then take it back.
+        // A subprocess, not in-process capture — the child's stdin reader
+        // must die with it, or it would steal keystrokes from the TUI.
+        if let Some(target) = app.take_pending_ssh() {
+            ratatui::restore();
+            println!("🦦  boarding {target} — the session will be captured. exit to return.");
+            let result = std::env::current_exe().and_then(|exe| {
+                std::process::Command::new(exe)
+                    .args(["run", "--", "ssh", &target])
+                    .status()
+            });
+            *terminal = ratatui::init();
+            terminal.clear()?;
+            if let Err(e) = result {
+                app.status = Some(format!("couldn't launch ssh: {e}"));
+            }
+            let _ = app.reload();
+        }
     }
     Ok(())
 }

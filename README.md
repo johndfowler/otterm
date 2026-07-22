@@ -1,4 +1,4 @@
-# Otterm ~( o.o )~
+# Otterm 🦦 — stay cool.
 
 **The output librarian.** Run commands through Otterm and it captures every
 byte they print — colors included — so "what did that migration say twenty
@@ -48,6 +48,19 @@ they mean. Editors, pagers, ssh, multiplexers, and friends are blocklisted
 (extend with `OTTERM_IGNORE="foo bar"`). Your history keeps exactly what you
 typed. Opt out per command with a leading space, or per session with
 `otterm-off` / `otterm-on`.
+
+## The raft (Tailscale) 🦦
+
+Press `t` in the library to see your tailnet — every machine, online or
+not. `Enter` boards one: the TUI steps aside, an `ssh` session runs through
+the capture engine (so the whole session is archived like any other run),
+and you're back in the library when you log out. Press `p` for a QR code of
+the `ssh://user@host` URI — point a phone terminal at the screen and board
+the same machine from a deck chair. The laptop-getting-hot-in-the-sun move:
+run the heavy job on a cool machine indoors, follow it live from the pool.
+
+Press `o` for the den: your capture stats (runs, bytes archived, success
+rate, comfort command), presided over by 🦦.
 
 ## The library (TUI)
 
