@@ -1,0 +1,41 @@
+/* The den's web colors — keep in sync with src/tui/theme.rs */
+:root {
+  --fur: #c98d5c;
+  --fur-dark: #6e4a34;
+  --cream: #eee2ca;
+  --river: #56a8b2;
+  --deep: #1e3a46;
+  --clam: #e4a060;
+  --ok: #78be78;
+  --err: #e06c60;
+}
+body {
+  background: var(--deep);
+  color: var(--cream);
+  font-family: system-ui, sans-serif;
+  margin: 0 auto;
+  padding: 24px;
+  max-width: 900px;
+}
+header { color: var(--river); font-size: 18px; margin-bottom: 16px; }
+header .sub { font-size: 13px; }
+a.run {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 12px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--cream);
+}
+a.run:hover { background: rgba(86, 168, 178, 0.15); }
+a.run code { color: var(--clam); }
+a.run .meta { margin-left: auto; color: var(--river); font-size: 12px; }
+.live { color: var(--ok); }
+.ok { color: var(--ok); }
+.err { color: var(--err); }
+.empty { color: var(--river); }
+#terminal { margin-top: 12px; }
+footer { color: var(--fur); margin-top: 12px; font-style: italic; }
+/* otter-flavored wterm theme (wterm themes are CSS custom properties) */
+.wterm { --term-bg: #16303b; --term-fg: #eee2ca; --term-cursor: #56a8b2; }

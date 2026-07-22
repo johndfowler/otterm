@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>otterm — watching</title>
+<link rel="stylesheet" href="/assets/dom/terminal.css">
+<link rel="stylesheet" href="/assets/den.css">
+</head>
+<body>
+<header>🦦 <span id="state" class="live">● live</span></header>
+<div id="terminal" class="wterm" role="textbox" aria-label="Captured command output" aria-multiline="true" aria-roledescription="terminal"></div>
+<footer id="footer"></footer>
+<script type="importmap">
+{ "imports": { "@wterm/core": "/assets/core/index.js" } }
+</script>
+<script type="module">
+import { WTerm } from '/assets/dom/index.js';
+import { WebSocketTransport } from '/assets/core/index.js';
+
+const id = location.pathname.split('/').pop();
+const stateEl = document.getElementById('state');
+const footerEl = document.getElementById('footer');
+
+const term = new WTerm(document.getElementById('terminal'), { autoResize: true });
+await term.init();
+
+const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+const ws = new WebSocketTransport({
+  url: `${proto}://${location.host}/stream/${id}`,
+  onData(data) {
+    if (typeof data === 'string') {
+      // control frame — byte frames always arrive binary
+      const msg = JSON.parse(data);
+      if (msg.done) {
+        stateEl.textContent = msg.exit === 0 ? '✓ done' : `✗ exit ${msg.exit ?? '?'}`;
+        stateEl.className = msg.exit === 0 ? 'ok' : 'err';
+        footerEl.textContent = 'stay cool. ~( o.o )~';
+      }
+    } else {
+      term.write(data);
+    }
+  },
+  onClose() {
+    if (stateEl.className === 'live') stateEl.textContent = '… reconnecting';
+  },
+});
+ws.connect();
+</script>
+</body>
+</html>
