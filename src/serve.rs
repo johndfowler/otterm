@@ -328,7 +328,14 @@ fn send_replay(s: &mut TcpStream, store: &Store, id: &str) -> io::Result<u64> {
 /// Send whatever landed in the log since `offset`; return the new offset.
 fn send_appends(s: &mut TcpStream, store: &Store, id: &str, offset: u64) -> io::Result<u64> {
     use std::io::{Seek, SeekFrom};
-    let mut f = std::fs::File::open(store.output_path(id))?;
+    // A deleted run dir is not an error: the caller's `load_meta` returns
+    // None next, and the watcher gets its done frame instead of a dropped
+    // connection.
+    let mut f = match std::fs::File::open(store.output_path(id)) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(offset),
+        Err(e) => return Err(e),
+    };
     let len = f.metadata()?.len();
     if len <= offset {
         return Ok(offset);
@@ -371,12 +378,9 @@ pub fn serve(listener: TcpListener, store: &Store) -> io::Result<()> {
 /// only reachable inside the tailnet. Without a tailnet, loopback with a
 /// heads-up — never 0.0.0.0 silently.
 pub fn detect_bind() -> String {
-    let ip = std::process::Command::new("tailscale")
-        .args(["ip", "-4"])
-        .output()
+    let ip = fleet::tailscale_output(&["ip", "-4"])
         .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|out| String::from_utf8(out).ok())
         .and_then(|s| s.lines().next().map(str::trim).map(str::to_string));
     match ip {
         Some(ip) if !ip.is_empty() => ip,
@@ -639,6 +643,30 @@ mod tests {
         assert_eq!(
             String::from_utf8(done.payload).unwrap(),
             "{\"done\":true,\"exit\":3}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn vanished_run_dir_reports_done() {
+        let (store, root) = fixture("stream-vanish");
+        let mut meta = done_meta(&store, "echo soon-gone");
+        meta.done = false;
+        meta.pid = Some(std::process::id()); // alive → RunState::Running
+        store.record_start(&meta).unwrap();
+
+        let mut c = ws_connect(&root, &meta.id);
+        let replay = read_frame(&mut c);
+        assert_eq!(replay.payload, b"abc");
+
+        // The run dir vanishes mid-stream: the spec promises a done frame
+        // with a null exit, not a dropped connection.
+        fs::remove_dir_all(store.run_dir(&meta.id)).unwrap();
+        let done = read_frame(&mut c);
+        assert_eq!(done.opcode, crate::ws::OP_TEXT);
+        assert_eq!(
+            String::from_utf8(done.payload).unwrap(),
+            "{\"done\":true,\"exit\":null}"
         );
         fs::remove_dir_all(root).unwrap();
     }

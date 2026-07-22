@@ -52,12 +52,17 @@ pub fn peers() -> io::Result<Vec<Peer>> {
 }
 
 fn tailscale_status() -> io::Result<Vec<u8>> {
-    // Homebrew CLI first, then the Mac app's bundled binary.
+    tailscale_output(&["status", "--json"])
+}
+
+/// Run `tailscale <args>` against the first binary that answers:
+/// Homebrew CLI first, then the Mac app's bundled binary.
+pub(crate) fn tailscale_output(args: &[&str]) -> io::Result<Vec<u8>> {
     for bin in [
         "tailscale",
         "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
     ] {
-        if let Ok(out) = Command::new(bin).args(["status", "--json"]).output() {
+        if let Ok(out) = Command::new(bin).args(args).output() {
             if out.status.success() {
                 return Ok(out.stdout);
             }

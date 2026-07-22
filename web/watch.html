@@ -26,6 +26,7 @@ const term = new WTerm(document.getElementById('terminal'), { autoResize: true }
 await term.init();
 
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+let reconnecting = false;
 const ws = new WebSocketTransport({
   url: `${proto}://${location.host}/stream/${id}`,
   onData(data) {
@@ -41,7 +42,13 @@ const ws = new WebSocketTransport({
       term.write(data);
     }
   },
+  onOpen() {
+    // The server replays from byte 0 on every (re)connect; after a hiccup
+    // the terminal already holds those bytes, so start over cleanly.
+    if (reconnecting) location.reload();
+  },
   onClose() {
+    reconnecting = true;
     if (stateEl.className === 'live') stateEl.textContent = '… reconnecting';
   },
 });
