@@ -7,11 +7,17 @@
 // only the tests drive this module.
 #![allow(dead_code)]
 
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 
 use crate::store::{RunState, Store};
+
+/// Browsers get the tail of oversized logs, same rule as the TUI viewer.
+const REPLAY_MAX: u64 = 16 * 1024 * 1024;
+
+/// Tail polling cadence, matching the TUI tick.
+const TICK: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// Run ids are `{millis:013}-{pid:05}` — anything else is not a run and
 /// must never reach the filesystem (no `../` games).
@@ -200,12 +206,150 @@ pub fn handle_conn(stream: TcpStream, store: &Store) -> io::Result<()> {
             Some((bytes, mime)) => respond(&stream, 200, mime, bytes),
             None => respond(&stream, 404, "text/plain", b"not found"),
         }
-    } else if path.starts_with("/stream/") {
-        // Task 5 wires the WebSocket stream; until then, be explicit.
-        respond(&stream, 400, "text/plain", b"expected a websocket upgrade")
+    } else if let Some(id) = path.strip_prefix("/stream/") {
+        stream_run(stream, store, id, &req)
     } else {
         respond(&stream, 404, "text/plain", b"not found")
     }
+}
+
+fn stream_run(mut s: TcpStream, store: &Store, id: &str, req: &Request) -> io::Result<()> {
+    if !valid_id(id) || store.load_meta(id).is_none() {
+        return respond(&s, 404, "text/plain", b"no such run");
+    }
+    let Some(key) = req.header("sec-websocket-key") else {
+        return respond(&s, 400, "text/plain", b"expected a websocket upgrade");
+    };
+    let head = format!(
+        "HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: {}\r\n\r\n",
+        crate::ws::accept_key(key)
+    );
+    s.write_all(head.as_bytes())?;
+
+    // The read half times out each tick so the loop can service pings,
+    // closes, and (one day) input between output chunks.
+    s.set_read_timeout(Some(TICK))?;
+    let mut read_half = s.try_clone()?;
+    let mut inbox: Vec<u8> = Vec::new();
+    let mut frag: Option<Vec<u8>> = None; // partial watcher message, by RFC 6455 continuation
+    let mut offset = send_replay(&mut s, store, id)?;
+
+    loop {
+        let mut chunk = [0u8; 4096];
+        match read_half.read(&mut chunk) {
+            Ok(0) => return Ok(()), // watcher hung up
+            Ok(n) => inbox.extend_from_slice(&chunk[..n]),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            Err(e) => return Err(e),
+        }
+        while let Some((frame, used)) = crate::ws::parse_frame(&inbox)? {
+            inbox.drain(..used);
+            match frame.opcode {
+                crate::ws::OP_PING => {
+                    s.write_all(&crate::ws::encode(crate::ws::OP_PONG, &frame.payload))?
+                }
+                crate::ws::OP_CLOSE => return Ok(()),
+                crate::ws::OP_TEXT | crate::ws::OP_BINARY if !frame.fin => {
+                    frag = Some(frame.payload);
+                }
+                crate::ws::OP_CONT => {
+                    if let Some(data) = &mut frag {
+                        data.extend_from_slice(&frame.payload);
+                        if data.len() > crate::ws::MAX_MESSAGE {
+                            return Err(io::Error::other("ws message too large"));
+                        }
+                        if frame.fin {
+                            frag = None;
+                        }
+                    }
+                }
+                // Complete watcher messages: the input seam — ignored for now.
+                _ => {}
+            }
+        }
+        offset = send_appends(&mut s, store, id, offset)?;
+        match store.load_meta(id) {
+            Some(meta) if meta.state() == RunState::Running => {}
+            Some(meta) => {
+                // Finished or died: flush the last bytes, then say so.
+                send_appends(&mut s, store, id, offset)?;
+                let exit = meta
+                    .exit_code
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "null".into());
+                let done = format!("{{\"done\":true,\"exit\":{exit}}}");
+                s.write_all(&crate::ws::encode(crate::ws::OP_TEXT, done.as_bytes()))?;
+                // Keep the socket until the watcher leaves, per the spec.
+                loop {
+                    let mut chunk = [0u8; 4096];
+                    match read_half.read(&mut chunk) {
+                        Ok(0) => return Ok(()),
+                        Ok(n) => inbox.extend_from_slice(&chunk[..n]),
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                            ) => {}
+                        Err(e) => return Err(e),
+                    }
+                    while let Some((frame, used)) = crate::ws::parse_frame(&inbox)? {
+                        inbox.drain(..used);
+                        match frame.opcode {
+                            crate::ws::OP_PING => {
+                                s.write_all(&crate::ws::encode(crate::ws::OP_PONG, &frame.payload))?
+                            }
+                            crate::ws::OP_CLOSE => return Ok(()),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            // Run dir vanished mid-stream: tell the watcher we're done.
+            None => {
+                s.write_all(&crate::ws::encode(
+                    crate::ws::OP_TEXT,
+                    b"{\"done\":true,\"exit\":null}",
+                ))?;
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// Send the captured-so-far bytes (tail-first for oversized logs, same
+/// rule as the TUI) and return the file offset to continue tailing from.
+fn send_replay(s: &mut TcpStream, store: &Store, id: &str) -> io::Result<u64> {
+    let (buf, _truncated) = store.read_output(id, REPLAY_MAX)?;
+    send_chunks(s, &buf)?;
+    Ok(store.output_path(id).metadata()?.len())
+}
+
+/// Send whatever landed in the log since `offset`; return the new offset.
+fn send_appends(s: &mut TcpStream, store: &Store, id: &str, offset: u64) -> io::Result<u64> {
+    use std::io::{Seek, SeekFrom};
+    let mut f = std::fs::File::open(store.output_path(id))?;
+    let len = f.metadata()?.len();
+    if len <= offset {
+        return Ok(offset);
+    }
+    f.seek(SeekFrom::Start(offset))?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf)?;
+    send_chunks(s, &buf)?;
+    Ok(len)
+}
+
+fn send_chunks(s: &mut TcpStream, mut data: &[u8]) -> io::Result<()> {
+    while !data.is_empty() {
+        let n = data.len().min(crate::ws::MAX_MESSAGE);
+        s.write_all(&crate::ws::encode(crate::ws::OP_BINARY, &data[..n]))?;
+        data = &data[n..];
+    }
+    Ok(())
 }
 
 /// Accept loop — one thread per watcher. A personal tool's worth of
@@ -257,6 +401,65 @@ mod tests {
         fs::create_dir_all(store.run_dir(&meta.id)).unwrap();
         fs::write(store.output_path(&meta.id), b"abc").unwrap();
         meta
+    }
+
+    /// Build a masked client frame the way a browser sends it.
+    fn masked_frame(op: u8, payload: &[u8]) -> Vec<u8> {
+        let mut v = vec![0x80 | op, 0x80 | payload.len() as u8, 1, 2, 3, 4];
+        for (i, b) in payload.iter().enumerate() {
+            v.push(b ^ [1u8, 2, 3, 4][i % 4]);
+        }
+        v
+    }
+
+    /// Start a one-shot server for `store`'s root on loopback and complete
+    /// a WebSocket handshake for `/stream/<id>`. (The handler thread
+    /// re-opens the store from its root, since a detached thread can't
+    /// borrow the fixture's `Store`.)
+    fn ws_connect(root: &std::path::Path, id: &str) -> TcpStream {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let root = root.to_path_buf();
+        let id_owned = id.to_string();
+        thread::spawn(move || {
+            let store = Store::open_at(root).unwrap();
+            let (stream, _) = listener.accept().unwrap();
+            handle_conn(stream, &store).unwrap();
+        });
+        let mut c = TcpStream::connect(addr).unwrap();
+        c.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        write!(
+            c,
+            "GET /stream/{id_owned} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+        )
+        .unwrap();
+        // Consume the 101 response headers.
+        let mut byte = [0u8; 1];
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            c.read_exact(&mut byte).unwrap();
+            head.push(byte[0]);
+        }
+        let head = String::from_utf8(head).unwrap();
+        assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+        assert!(head.contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="), "{head}");
+        c
+    }
+
+    /// Read exactly one server frame.
+    fn read_frame(c: &mut TcpStream) -> crate::ws::Frame {
+        let mut inbox = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            if let Some((frame, used)) = crate::ws::parse_frame(&inbox).unwrap() {
+                let _ = used;
+                return frame;
+            }
+            let n = c.read(&mut chunk).unwrap();
+            assert!(n > 0, "connection closed waiting for a frame");
+            inbox.extend_from_slice(&chunk[..n]);
+        }
     }
 
     /// Fire one raw request at a handler running on loopback.
@@ -338,6 +541,96 @@ mod tests {
         );
         assert!(traversal.starts_with("HTTP/1.1 404"), "{traversal}");
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn finished_run_replays_then_reports_done() {
+        let (store, root) = fixture("stream-done");
+        let meta = done_meta(&store, "echo hi");
+        store.record(&meta).unwrap();
+        let mut c = ws_connect(&root, &meta.id);
+        let data = read_frame(&mut c);
+        assert_eq!(data.opcode, crate::ws::OP_BINARY);
+        assert_eq!(data.payload, b"abc");
+        let done = read_frame(&mut c);
+        assert_eq!(done.opcode, crate::ws::OP_TEXT);
+        assert_eq!(
+            String::from_utf8(done.payload).unwrap(),
+            "{\"done\":true,\"exit\":0}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn live_run_tails_then_completes() {
+        let (store, root) = fixture("stream-live");
+        let mut meta = done_meta(&store, "sleep lots");
+        meta.done = false;
+        meta.pid = Some(std::process::id()); // alive → RunState::Running
+        store.record_start(&meta).unwrap();
+        // done_meta seeds the log with "abc"; a live tail starts from an
+        // empty log, or the replay frame races the first write below.
+        fs::write(store.output_path(&meta.id), b"").unwrap();
+
+        let mut c = ws_connect(&root, &meta.id);
+
+        // New bytes land in the log → a binary frame follows.
+        fs::write(store.output_path(&meta.id), b"first\r\n").unwrap();
+        let f1 = read_frame(&mut c);
+        assert_eq!(f1.payload, b"first\r\n");
+        fs::write(store.output_path(&meta.id), b"first\r\nsecond\r\n").unwrap();
+        let f2 = read_frame(&mut c);
+        assert_eq!(f2.payload, b"second\r\n");
+
+        // The capture finishes → final bytes + the done frame.
+        let mut final_meta = meta.clone();
+        final_meta.done = true;
+        final_meta.exit_code = Some(3);
+        store.record(&final_meta).unwrap();
+        let done = read_frame(&mut c);
+        assert_eq!(done.opcode, crate::ws::OP_TEXT);
+        assert_eq!(
+            String::from_utf8(done.payload).unwrap(),
+            "{\"done\":true,\"exit\":3}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ping_gets_pong() {
+        let (store, root) = fixture("stream-ping");
+        let meta = done_meta(&store, "echo hi");
+        store.record(&meta).unwrap();
+        let mut c = ws_connect(&root, &meta.id);
+        read_frame(&mut c); // replay
+        read_frame(&mut c); // done
+        c.write_all(&masked_frame(crate::ws::OP_PING, b"yo"))
+            .unwrap();
+        // A finished run keeps its socket open until the watcher leaves,
+        // so the pong must arrive even after the done frame.
+        let pong = read_frame(&mut c);
+        assert_eq!(pong.opcode, crate::ws::OP_PONG);
+        assert_eq!(pong.payload, b"yo");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unknown_run_is_404() {
+        let (_store, root) = fixture("stream-404");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let root2 = root.clone();
+        thread::spawn(move || {
+            let store = Store::open_at(root2).unwrap();
+            let (stream, _) = listener.accept().unwrap();
+            handle_conn(stream, &store).unwrap();
+        });
+        let mut c = TcpStream::connect(addr).unwrap();
+        write!(c, "GET /stream/0000000000000-00000 HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n").unwrap();
+        let mut out = String::new();
+        c.read_to_string(&mut out).unwrap();
+        assert!(out.starts_with("HTTP/1.1 404"), "{out}");
         fs::remove_dir_all(root).unwrap();
     }
 }

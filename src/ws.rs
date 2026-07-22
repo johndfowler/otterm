@@ -2,16 +2,13 @@
 //! unmasked binary and text frames, and parses masked client frames to
 //! honor ping/pong/close. The read side is the future input seam.
 
-// Nothing consumes this module until `serve.rs` (the lifeguard) lands;
-// keep the build warning-free in the meantime.
-#![allow(dead_code)]
-
 use std::io;
 
 /// Largest client frame we bother with; watchers only send pongs and
 /// (one day) input. Anything bigger is a bug or an attack.
 pub const MAX_MESSAGE: usize = 1 << 20;
 
+pub const OP_CONT: u8 = 0x0;
 pub const OP_TEXT: u8 = 0x1;
 pub const OP_BINARY: u8 = 0x2;
 pub const OP_CLOSE: u8 = 0x8;
