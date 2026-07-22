@@ -3,14 +3,11 @@
 //! construction — the server never writes to the store, and captures are
 //! served as data under the same trust model as the TUI.
 
-// Wired into `main` by the `otterm serve` subcommand (Task 6); until then
-// only the tests drive this module.
-#![allow(dead_code)]
-
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 
+use crate::fleet;
 use crate::store::{RunState, Store};
 
 /// Browsers get the tail of oversized logs, same rule as the TUI viewer.
@@ -368,6 +365,55 @@ pub fn serve(listener: TcpListener, store: &Store) -> io::Result<()> {
         }
     });
     Ok(())
+}
+
+/// Default listen address: this machine's Tailscale IPv4, so the den is
+/// only reachable inside the tailnet. Without a tailnet, loopback with a
+/// heads-up — never 0.0.0.0 silently.
+pub fn detect_bind() -> String {
+    let ip = std::process::Command::new("tailscale")
+        .args(["ip", "-4"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.lines().next().map(str::trim).map(str::to_string));
+    match ip {
+        Some(ip) if !ip.is_empty() => ip,
+        _ => {
+            eprintln!("otterm serve: no tailnet found — serving on 127.0.0.1 only");
+            "127.0.0.1".to_string()
+        }
+    }
+}
+
+pub fn run(store: &Store, bind: &str, port: u16) -> io::Result<()> {
+    let addr = format!("{bind}:{port}");
+    let listener = TcpListener::bind(&addr)?;
+    if bind == "0.0.0.0" || bind == "::" {
+        eprintln!(
+            "otterm serve: WARNING — listening on all interfaces; \
+             anyone who can reach this machine can watch your captures."
+        );
+    }
+    let url = format!("http://{addr}");
+    if std::env::var_os("OTTERM_QUIET").is_some() {
+        println!("{url}"); // pipeable, like `run`'s quiet mode
+    } else {
+        splash(&url);
+    }
+    serve(listener, store)
+}
+
+fn splash(url: &str) {
+    println!();
+    println!("  🦦 the lifeguard is on duty");
+    println!("  {url}");
+    if let Ok(qr) = fleet::qr_text(url) {
+        println!("{qr}");
+    }
+    println!("  scan to watch from the pool. stay cool.");
+    println!();
 }
 
 #[cfg(test)]

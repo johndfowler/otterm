@@ -32,6 +32,15 @@ enum Cmd {
     },
     /// Print the most recent run's captured output to stdout (pipeable)
     Last,
+    /// Serve the den over the tailnet — watch captures live in a browser
+    Serve {
+        /// Port to listen on
+        #[arg(long, default_value_t = 7777)]
+        port: u16,
+        /// Address to bind (default: this machine's Tailscale IPv4)
+        #[arg(long)]
+        bind: Option<String>,
+    },
     /// Print shell integration for ambient capture: eval "$(otterm init zsh)"
     Init {
         /// The shell to emit integration for (only zsh so far)
@@ -58,6 +67,10 @@ fn main() {
             std::process::exit(code);
         }
         Some(Cmd::Last) => print_last(&store),
+        Some(Cmd::Serve { port, bind }) => {
+            let bind = bind.unwrap_or_else(serve::detect_bind);
+            serve::run(&store, &bind, port)
+        }
         Some(Cmd::Init { .. }) => unreachable!("handled before the store opens"),
         None => tui::run(store),
     });
