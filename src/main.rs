@@ -4,6 +4,7 @@
 mod banner;
 mod capture;
 mod fleet;
+mod serve;
 mod store;
 mod tui;
 mod ws;

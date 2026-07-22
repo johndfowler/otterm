@@ -95,6 +95,11 @@ impl Store {
                 .ok_or_else(|| io::Error::other("no platform data directory"))?
                 .join("otterm"),
         };
+        Store::open_at(root)
+    }
+
+    /// Root a store at an arbitrary directory — tests and sandboxes.
+    pub fn open_at(root: PathBuf) -> io::Result<Store> {
         fs::create_dir_all(root.join("runs"))?;
         fs::create_dir_all(root.join("running"))?;
         Ok(Store { root })
