@@ -167,12 +167,16 @@ pub fn run_command(store: &Store, argv: &[String]) -> io::Result<i32> {
     meta.done = true;
     store.record(&meta)?;
 
-    // One dim line to stderr so stdout stays clean for pipes.
-    eprintln!(
-        "\x1b[2m~( o.o )~  captured {} · exit {} · otterm to browse\x1b[0m",
-        human_bytes(bytes),
-        status.exit_code(),
-    );
+    // One dim line to stderr so stdout stays clean for pipes. Suppressed
+    // under ambient shell capture (OTTERM_QUIET), where it would follow
+    // every single command.
+    if std::env::var_os("OTTERM_QUIET").is_none() {
+        eprintln!(
+            "\x1b[2m~( o.o )~  captured {} · exit {} · otterm to browse\x1b[0m",
+            human_bytes(bytes),
+            status.exit_code(),
+        );
+    }
     Ok(status.exit_code() as i32)
 }
 

@@ -29,10 +29,24 @@ enum Cmd {
     },
     /// Print the most recent run's captured output to stdout (pipeable)
     Last,
+    /// Print shell integration for ambient capture: eval "$(otterm init zsh)"
+    Init {
+        /// The shell to emit integration for (only zsh so far)
+        shell: String,
+    },
 }
 
 fn main() {
     let cli = Cli::parse();
+    // `init` needs no store — it just prints the hook script.
+    if let Some(Cmd::Init { shell }) = &cli.cmd {
+        if shell == "zsh" {
+            print!("{}", include_str!("../shell/otterm.zsh"));
+            return;
+        }
+        eprintln!("otterm: no integration for '{shell}' yet (only zsh)");
+        std::process::exit(1);
+    }
     let result = Store::open().and_then(|store| match cli.cmd {
         Some(Cmd::Run { command }) => {
             // Propagate the child's exit code so `otterm run` is transparent
@@ -41,6 +55,7 @@ fn main() {
             std::process::exit(code);
         }
         Some(Cmd::Last) => print_last(&store),
+        Some(Cmd::Init { .. }) => unreachable!("handled before the store opens"),
         None => tui::run(store),
     });
     if let Err(e) = result {

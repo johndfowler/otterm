@@ -32,6 +32,23 @@ proper EOF signaling when piped), terminal resizes propagate, and the child's
 exit code is passed through — `otterm run` is transparent to scripts, CI,
 and `&&` chains.
 
+## Ambient capture (zsh)
+
+Add to `~/.zshrc`:
+
+```sh
+eval "$(otterm init zsh)"
+```
+
+Every eligible command you type is then captured automatically — no
+`otterm run` needed. Eligible means a plain, single, external command:
+pipes, redirects, `&&`/`;` chains, builtins, functions, aliases, and
+env-assignment prefixes run untouched, because wrapping would change what
+they mean. Editors, pagers, ssh, multiplexers, and friends are blocklisted
+(extend with `OTTERM_IGNORE="foo bar"`). Your history keeps exactly what you
+typed. Opt out per command with a leading space, or per session with
+`otterm-off` / `otterm-on`.
+
 ## The library (TUI)
 
 | Key | Action |
