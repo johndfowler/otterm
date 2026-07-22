@@ -134,7 +134,10 @@ impl Store {
     }
 
     fn write_meta(&self, meta: &RunMeta) -> io::Result<()> {
-        fs::write(self.meta_path(&meta.id), serde_json::to_string(meta)?)
+        // Write tmp + rename so concurrent readers never see a torn meta.json.
+        let path = self.meta_path(&meta.id);
+        fs::write(path.with_extension("json.tmp"), serde_json::to_string(meta)?)?;
+        fs::rename(path.with_extension("json.tmp"), path)
     }
 
     pub fn load_meta(&self, id: &str) -> Option<RunMeta> {
