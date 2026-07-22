@@ -6,6 +6,7 @@ mod capture;
 mod fleet;
 mod store;
 mod tui;
+mod ws;
 
 use std::io::{self, Read, Write};
 
