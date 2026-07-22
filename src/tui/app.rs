@@ -80,7 +80,11 @@ impl DenStats {
             if most.as_ref().is_none_or(|(_, best)| *n > *best) {
                 most = Some((cmdline.clone(), *n));
             }
-            if stats.longest.as_ref().is_none_or(|(_, d)| m.duration_ms > *d) {
+            if stats
+                .longest
+                .as_ref()
+                .is_none_or(|(_, d)| m.duration_ms > *d)
+            {
                 stats.longest = Some((cmdline, m.duration_ms));
             }
         }
@@ -249,7 +253,9 @@ impl App {
     /// Tail a live run: re-decode when the log grew, pin to bottom when
     /// following, and notice the capture finishing.
     fn poll_live_viewer(&mut self) {
-        let Some(v) = self.viewer.as_mut() else { return };
+        let Some(v) = self.viewer.as_mut() else {
+            return;
+        };
         if !v.live {
             return;
         }
@@ -348,7 +354,9 @@ impl App {
             KeyCode::Char('G') if len > 0 => self.peer_selected = len - 1,
             KeyCode::Char('r') => self.open_raft(),
             KeyCode::Enter => {
-                let Some(peer) = self.peers.get(self.peer_selected) else { return };
+                let Some(peer) = self.peers.get(self.peer_selected) else {
+                    return;
+                };
                 if peer.is_self {
                     self.status = Some("that's this machine — you're already aboard".into());
                 } else if !peer.online {
@@ -360,7 +368,9 @@ impl App {
             // 'p' for phone: QR-encode the ssh URI so a phone terminal can
             // board the same machine by pointing a camera at the screen.
             KeyCode::Char('p') => {
-                let Some(peer) = self.peers.get(self.peer_selected) else { return };
+                let Some(peer) = self.peers.get(self.peer_selected) else {
+                    return;
+                };
                 match crate::fleet::qr_text(&peer.ssh_uri()) {
                     Ok(qr) => self.qr = Some((peer.ssh_uri(), qr)),
                     Err(e) => self.status = Some(format!("QR failed: {e}")),
@@ -427,7 +437,9 @@ impl App {
     /// the run's original cwd. It registers itself in the store, so it pops
     /// up in the list as a live run within a tick — watchable immediately.
     fn rerun_selected(&mut self) {
-        let Some(meta) = self.selected_meta() else { return };
+        let Some(meta) = self.selected_meta() else {
+            return;
+        };
         let (cmd, cwd) = (meta.cmd.clone(), meta.cwd.clone());
         let Ok(exe) = std::env::current_exe() else {
             self.status = Some("can't locate the otterm binary".into());
@@ -480,14 +492,20 @@ impl App {
     }
 
     fn on_key_viewer(&mut self, code: KeyCode) {
-        let Some(v) = self.viewer.as_mut() else { return };
+        let Some(v) = self.viewer.as_mut() else {
+            return;
+        };
         // Max scroll leaves the last page filling the viewport, not a lone
         // final line at the top.
         let max = v.lines.len().saturating_sub(v.height.max(1));
         let page = v.height.max(1);
         match code {
             KeyCode::Char('q') | KeyCode::Esc => {
-                self.view = if v.from_results { View::Results } else { View::List };
+                self.view = if v.from_results {
+                    View::Results
+                } else {
+                    View::List
+                };
                 self.viewer = None;
             }
             // Manual scrolling unpins a live tail; G (or f) pins it again.
@@ -692,7 +710,9 @@ impl App {
     }
 
     fn set_viewer_query(&mut self, query: &str) {
-        let Some(v) = self.viewer.as_mut() else { return };
+        let Some(v) = self.viewer.as_mut() else {
+            return;
+        };
         compute_matches(v, query);
         if v.matches.is_empty() {
             self.status = Some(if query.is_empty() {
@@ -793,7 +813,10 @@ mod tests {
             .collect();
         assert!(lines.iter().all(|l| !l.contains('\r')));
         // A lone \r (progress rewrite) becomes its own line.
-        assert_eq!(lines[..4], ["deploy", "ERROR: refused", "progress 1", "progress 2"]);
+        assert_eq!(
+            lines[..4],
+            ["deploy", "ERROR: refused", "progress 1", "progress 2"]
+        );
     }
 }
 

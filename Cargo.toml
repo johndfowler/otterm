@@ -1,10 +1,10 @@
 [package]
 name = "otterm"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "Otterm — the output librarian. Run commands through it, never lose their output again."
 license = "MIT"
-# Guard against accidental publishes until 0.5.0 is intentionally released
+# Guard against accidental publishes — releasing is a deliberate later act
 # (the crates.io name is already reserved by the yanked 0.4.0).
 publish = false
 

@@ -16,7 +16,10 @@ use crate::tui::app::{age, duration, App, Mode, View};
 use crate::tui::theme;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
-    frame.render_widget(Block::new().style(Style::new().bg(theme::DEEP)), frame.area());
+    frame.render_widget(
+        Block::new().style(Style::new().bg(theme::DEEP)),
+        frame.area(),
+    );
     match app.view {
         View::Splash => render_splash(frame, app),
         View::List | View::Results | View::Raft | View::Den => {
@@ -70,7 +73,7 @@ fn render_splash(frame: &mut Frame, app: &App) {
     let rows = Layout::vertical([
         Constraint::Length(title_lines),
         Constraint::Length(otter_lines + 1), // otter + bob slack
-        Constraint::Length(1), // waves
+        Constraint::Length(1),               // waves
         Constraint::Length(1),
         Constraint::Length(1), // tagline
         Constraint::Length(1),
@@ -86,7 +89,11 @@ fn render_splash(frame: &mut Frame, app: &App) {
     // shift each row of the drawing independently and distort it. The otter
     // bobs on the water: down a row every other beat.
     let bob = ((app.tick / 6) % 2) as u16;
-    let otter_area = Rect { y: rows[1].y + bob, height: otter_lines, ..rows[1] };
+    let otter_area = Rect {
+        y: rows[1].y + bob,
+        height: otter_lines,
+        ..rows[1]
+    };
     frame.render_widget(otter_art(theme::FUR), centered_h(otter_area, otter_width()));
 
     frame.render_widget(
@@ -182,7 +189,11 @@ fn wave_line(tick: u64) -> Line<'static> {
 
 fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     // The mascot blinks every few seconds. It's alive, you see.
-    let mascot = if app.tick % 40 < 3 { " ~( -.- )~ " } else { " ~( o.o )~ " };
+    let mascot = if app.tick % 40 < 3 {
+        " ~( -.- )~ "
+    } else {
+        " ~( o.o )~ "
+    };
     let place = match app.view {
         View::Raft => format!("raft · {} machines", app.peers.len()),
         View::Den => "den".to_owned(),
@@ -227,7 +238,11 @@ fn render_list(frame: &mut Frame, area: Rect, app: &mut App) {
         let m = &app.runs[i];
         let (mark, color, dur) = match m.state() {
             // A live run's duration column counts up in real time.
-            RunState::Running => (spin, theme::CLAM, duration(now_ms().saturating_sub(m.started_ms))),
+            RunState::Running => (
+                spin,
+                theme::CLAM,
+                duration(now_ms().saturating_sub(m.started_ms)),
+            ),
             RunState::Died => ("!", theme::ERR, "died".to_owned()),
             RunState::Done if m.success() => ("✓", theme::OK, duration(m.duration_ms)),
             RunState::Done => ("✗", theme::ERR, duration(m.duration_ms)),
@@ -326,7 +341,11 @@ fn render_raft(frame: &mut Frame, area: Rect, app: &mut App) {
 /// decent contrast, so it gets a cream-on-dark box of its own.
 fn render_qr_overlay(frame: &mut Frame, caption: &str, qr: &str) {
     let qr_lines: Vec<&str> = qr.lines().collect();
-    let w = qr_lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
+    let w = qr_lines
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0) as u16;
     let h = qr_lines.len() as u16 + 2; // + caption + hint
     let area = frame.area();
     let [vcenter] = Layout::vertical([Constraint::Length(h.min(area.height))])
@@ -339,7 +358,10 @@ fn render_qr_overlay(frame: &mut Frame, caption: &str, qr: &str) {
         .map(|l| Line::from(l.to_string()).style(Style::new().fg(theme::CREAM).bg(theme::DEEP)))
         .collect();
     text.push(Line::from(caption.to_owned()).style(Style::new().fg(theme::CLAM).bold()));
-    text.push(Line::from("scan with a phone terminal · any key closes").style(Style::new().fg(theme::FUR)));
+    text.push(
+        Line::from("scan with a phone terminal · any key closes")
+            .style(Style::new().fg(theme::FUR)),
+    );
     frame.render_widget(Paragraph::new(text).alignment(Alignment::Center), boxed);
 }
 
@@ -368,10 +390,16 @@ fn render_den(frame: &mut Frame, area: Rect, app: &App) {
         ),
     ];
     if let Some((cmd, n)) = &s.most_run {
-        lines.push(row("comfort command ", format!("{} ({n}×)", ellipsize(cmd, 40))));
+        lines.push(row(
+            "comfort command ",
+            format!("{} ({n}×)", ellipsize(cmd, 40)),
+        ));
     }
     if let Some((cmd, ms)) = &s.longest {
-        lines.push(row("longest sit     ", format!("{} ({})", ellipsize(cmd, 40), duration(*ms))));
+        lines.push(row(
+            "longest sit     ",
+            format!("{} ({})", ellipsize(cmd, 40), duration(*ms)),
+        ));
     }
     lines.push(Line::raw(""));
     lines.push(
@@ -414,7 +442,11 @@ fn render_viewer_header(frame: &mut Frame, area: Rect, app: &App) {
     let Some(v) = app.viewer.as_ref() else { return };
     let m = &v.meta;
     let (mark, color, detail) = if v.live {
-        let follow = if v.follow { "following" } else { "paused — f to follow" };
+        let follow = if v.follow {
+            "following"
+        } else {
+            "paused — f to follow"
+        };
         (
             "●",
             theme::CLAM,
@@ -463,7 +495,9 @@ fn render_viewer_header(frame: &mut Frame, area: Rect, app: &App) {
 fn render_viewer(frame: &mut Frame, area: Rect, app: &mut App) {
     let Some(v) = app.viewer.as_mut() else { return };
     v.height = area.height as usize; // key handlers page and follow by this
-    v.scroll = v.scroll.min(v.lines.len().saturating_sub(area.height as usize));
+    v.scroll = v
+        .scroll
+        .min(v.lines.len().saturating_sub(area.height as usize));
 
     // Only the visible window is cloned into the frame — the full decoded
     // log stays put in the viewer state.
@@ -527,7 +561,9 @@ fn prompt_line(label: &str, input: &str) -> Line<'static> {
 
 fn hints_line(app: &App) -> Line<'static> {
     let hints = match app.view {
-        View::List => "  Enter view · R re-run · t raft · o den · / filter · s search · x delete · q quit",
+        View::List => {
+            "  Enter view · R re-run · t raft · o den · / filter · s search · x delete · q quit"
+        }
         View::Results => "  Enter open at match · Esc back",
         View::Viewer => match app.viewer.as_ref() {
             Some(v) if v.live => "  f follow · j/k scroll · G bottom · / search · Esc back",
@@ -546,7 +582,10 @@ fn hints_line(app: &App) -> Line<'static> {
         }
     }
     Line::from(vec![
-        Span::styled(" otterm ", Style::new().fg(theme::DEEP).bg(theme::CLAM).bold()),
+        Span::styled(
+            " otterm ",
+            Style::new().fg(theme::DEEP).bg(theme::CLAM).bold(),
+        ),
         Span::styled(hints.to_owned(), Style::new().fg(theme::CREAM)),
         Span::styled(n_of_m, Style::new().fg(theme::CLAM)),
     ])

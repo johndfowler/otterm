@@ -35,7 +35,12 @@ impl Drop for RawGuard {
 
 fn pty_size() -> PtySize {
     let (cols, rows) = terminal::size().unwrap_or((80, 24));
-    PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }
+    PtySize {
+        rows,
+        cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    }
 }
 
 /// Run `argv` under capture. Returns the child's exit code so main can

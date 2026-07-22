@@ -47,15 +47,16 @@ pub fn peers() -> io::Result<Vec<Peer>> {
     if let Some(peers) = root.get("Peer").and_then(|p| p.as_object()) {
         out.extend(peers.values().filter_map(|n| parse_node(n, false)));
     }
-    out.sort_by(|a, b| {
-        (b.is_self, b.online, &a.name).cmp(&(a.is_self, a.online, &b.name))
-    });
+    out.sort_by(|a, b| (b.is_self, b.online, &a.name).cmp(&(a.is_self, a.online, &b.name)));
     Ok(out)
 }
 
 fn tailscale_status() -> io::Result<Vec<u8>> {
     // Homebrew CLI first, then the Mac app's bundled binary.
-    for bin in ["tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"] {
+    for bin in [
+        "tailscale",
+        "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+    ] {
         if let Ok(out) = Command::new(bin).args(["status", "--json"]).output() {
             if out.status.success() {
                 return Ok(out.stdout);
@@ -68,7 +69,12 @@ fn tailscale_status() -> io::Result<Vec<u8>> {
 }
 
 fn parse_node(node: &serde_json::Value, is_self: bool) -> Option<Peer> {
-    let s = |key: &str| node.get(key).and_then(|v| v.as_str()).unwrap_or("").to_owned();
+    let s = |key: &str| {
+        node.get(key)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_owned()
+    };
     let name = s("HostName");
     if name.is_empty() {
         return None;
@@ -92,7 +98,11 @@ fn parse_node(node: &serde_json::Value, is_self: bool) -> Option<Peer> {
         ip,
         os: s("OS"),
         // Self has no meaningful Online flag; it's here, so it's on.
-        online: is_self || node.get("Online").and_then(|v| v.as_bool()).unwrap_or(false),
+        online: is_self
+            || node
+                .get("Online")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         is_self,
     })
 }

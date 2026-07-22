@@ -21,6 +21,9 @@ otterm last | grep error
 
 # browse and search the library
 otterm
+
+otterm serve [--port N] [--bind IP]   # the lifeguard: watch any capture live
+                                      # in a browser over the tailnet (QR on startup)
 ```
 
 ## Why a pty?
