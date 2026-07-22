@@ -98,7 +98,13 @@ library. Set `OTTERM_DATA_DIR` to relocate
 everything. Logs over 16 MB are viewed/searched tail-first; nothing is ever
 truncated on disk. Prune from the TUI with `x`.
 
-## Build
+## Install
+
+```sh
+cargo install otterm
+```
+
+Or build from source:
 
 ```sh
 cargo build --release   # binary at target/release/otterm
